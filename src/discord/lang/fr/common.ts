@@ -15,9 +15,12 @@ export const commonLang = {
       case 'dm':
         return "Cette commande ne peut être utilisée qu'en message privé.";
       case 'mainGuildOnly':
-        return 'Cette commande ne peut être utilisé que sur le serveur principal.';
+        return 'Cette commande ne peut être utilisée que sur le serveur principal.';
       case 'anywhere':
         return 'Cette commande ne peut pas être utilisée ici.';
     }
   },
+  dmFailed:
+    "Vos MPs sont inaccessibles, cette commande n'a pas pu s'exécuter correctement.",
+  dmSuccess: 'Envoyé avec succès dans vos MPs.',
 } as const satisfies LangNode;
