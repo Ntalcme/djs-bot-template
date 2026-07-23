@@ -55,21 +55,25 @@ pnpm dev               # start the bot in watch mode
 
 ```
 src/
-  core/            # Pure domain — no discord.js
+  core/            # Pure domain - no discord.js
+    cache/         # TtlCache, for anything worth memoizing
     config/        # Env, read + validated once
     permissions/   # scope + authorization + requirements
-    types.ts       # Supported locales
+    types.ts       # Supported locales, shared guards
   discord/         # Presentation layer
     client/        # The gateway client
     commands/      # slash/ and prefix/ command modules
     components/    # Components V2 fluent builders
+    context/       # Per-invocation facts (locale, ...)
     events/        # Gateway event modules
+    features/      # One folder per feature: <name>.service.ts + <name>.ui.ts
     handlers/      # Dynamic command/event loaders
     interactions/  # Reply helpers + interactive messages
-    lang/          # en/ and fr/ language packs
-    presentations/ # State -> Container builders
-    usecases/      # Command logic (transport-agnostic)
+    lang/          # en/ and fr/ language packs, packs.ts registry
+    pipeline/      # Access dispatch shared by both fronts + denial replies
     registries/    # In-memory command tables + types
+    theme/         # colors, icons, markdown - the look, in one place
+    utils/         # constants, error helpers
   shared/          # logger, Result
   deploy-commands.ts
   index.ts
@@ -77,7 +81,7 @@ src/
 
 ## Adding a command
 
-Create a module in `src/discord/commands/slash/<name>.ts` (and/or `commands/prefix/<name>.ts`) that `export default`s an object satisfying `SlashCommand` / `PrefixCommand` — the loader picks it up automatically. See `ping` for the full slash + prefix + presentation + use-case pattern. Then run `pnpm deploy`.
+Create a module in `src/discord/commands/slash/<name>.ts` (and/or `commands/prefix/<name>.ts`) that `export default`s an object satisfying `SlashCommand` / `PrefixCommand` - the loader picks it up automatically. Put the logic in `src/discord/features/<name>/`, split into `<name>.service.ts` (transport-agnostic, returns a `CommandResponse`) and `<name>.ui.ts` (builds the container), and register its strings in `src/discord/lang/{en,fr}/<name>.ts` plus `lang/packs.ts`. See `ping` for the full pattern. Then run `pnpm deploy`.
 
 ## Deploying commands
 
@@ -88,7 +92,7 @@ Create a module in `src/discord/commands/slash/<name>.ts` (and/or `commands/pref
 
 ## Adding a database
 
-The template ships without persistence. To add one (e.g. Prisma), introduce a `core/persistence` client and `core/repositories`, then swap `resolveLocale` in `discord/locale.ts` for a per-user language lookup.
+The template ships without persistence. To add one (e.g. Prisma), introduce a `core/persistence` client and `core/repositories`, then swap `resolveLocale` in `discord/context/locale.ts` for a per-user language lookup (make it async and await it in the fronts). The same place is where a rank scale would replace the `everyone | owner` authorization union.
 
 ## License
 
