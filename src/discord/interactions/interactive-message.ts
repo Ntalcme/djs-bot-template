@@ -1,15 +1,18 @@
 import { MessageFlags } from 'discord.js';
 import type {
-  ContainerBuilder,
   Message,
   MessageComponentInteraction,
   RepliableInteraction,
   SendableChannels,
 } from 'discord.js';
-import type { Container } from '@/discord/components/index.js';
-import { INTERACTIVE_MESSAGE_IDLE_MS } from '@/discord/constants.js';
+import {
+  Container,
+  type TopLevelComponent,
+  type TopLevelComponentBuilder,
+} from '@/discord/components/index.js';
+import { INTERACTIVE_MESSAGE_IDLE_MS } from '@/discord/utils/constants.js';
 import { lang } from '@/discord/lang/index.js';
-import { resolveLocale } from '@/discord/locale.js';
+import { resolveLocale } from '@/discord/context/locale.js';
 import { safeDiscord } from './safe-discord.js';
 
 /** Collector end reason marking a deliberate `stop()`, told apart from a timeout. */
@@ -39,8 +42,11 @@ export interface ReduceContext {
  */
 export interface InteractiveMessage<State> {
   readonly initialState: State;
-  /** Build the container for a state; disable its interactive parts when `context.disabled`. */
-  render(state: State, context: RenderContext): Container;
+  /** Build the message body for a state: a single container, or an ordered list of top-level components. Disable interactive parts when `context.disabled`. */
+  render(
+    state: State,
+    context: RenderContext,
+  ): Container | readonly TopLevelComponent[];
   /** Compute the next state from a collected component interaction. */
   reduce(
     state: State,
@@ -60,8 +66,10 @@ function componentsOf<State>(
   controller: InteractiveMessage<State>,
   state: State,
   disabled: boolean,
-): ContainerBuilder[] {
-  return [controller.render(state, { disabled }).build()];
+): TopLevelComponentBuilder[] {
+  const body = controller.render(state, { disabled });
+  const items = body instanceof Container ? [body] : body;
+  return items.map((component) => component.build());
 }
 
 function isAllowed(
@@ -93,19 +101,23 @@ function drive<State>(
   initialState: State,
 ): void {
   let state = initialState;
+  // True once the disabled render actually reached the message.
+  let disabledRendered = false;
 
   const collector = message.createMessageComponentCollector({
     idle: controller.idleMs ?? INTERACTIVE_MESSAGE_IDLE_MS,
+    // Disallowed clicks never reach 'collect'.
+    filter: (interaction) =>
+      isAllowed(controller.allowedIds, interaction.user.id),
+  });
+
+  collector.on('ignore', (interaction) => {
+    void refuse(interaction);
   });
 
   collector.on('collect', (interaction) => {
     // Collector callbacks are synchronous; run the async transition detached.
     void (async () => {
-      if (!isAllowed(controller.allowedIds, interaction.user.id)) {
-        await refuse(interaction);
-        return;
-      }
-
       let stopped = false;
       let handled = false;
       state = await controller.reduce(state, interaction, {
@@ -126,6 +138,7 @@ function drive<State>(
           }),
           { action: 'interactiveUpdate' },
         );
+        if (stopped) disabledRendered = true;
       }
 
       // Tagged so the end handler skips its own re-render over this one.
@@ -134,8 +147,8 @@ function drive<State>(
   });
 
   collector.on('end', (_collected, reason) => {
-    // Only the idle timeout finalizes here; an explicit stop already did.
-    if (reason === STOP_REASON) return;
+    // Skip only if an explicit stop already rendered the disabled state.
+    if (reason === STOP_REASON && disabledRendered) return;
     void safeDiscord(
       message.edit({
         flags: MessageFlags.IsComponentsV2,
@@ -144,6 +157,14 @@ function drive<State>(
       { action: 'interactiveTimeout' },
     );
   });
+}
+
+/** Attach the self-updating collector to an already-sent `message`; send it yourself when you need custom send options (e.g. `allowedMentions`). */
+export function attachInteractiveCollector<State>(
+  message: Message,
+  controller: InteractiveMessage<State>,
+): void {
+  drive(message, controller, controller.initialState);
 }
 
 /**
@@ -176,26 +197,47 @@ export async function mountInteractiveMessage<State>(
 
 /**
  * Like {@link mountInteractiveMessage}, but reply to `interaction` instead of
- * posting in a channel. The reply is public (not ephemeral) so the timeout
- * re-render can still edit it.
+ * posting in a channel. Public by default so the idle-timeout re-render can
+ * edit it; pass `ephemeral` for a private reply (button clicks still update via
+ * the interaction, but the idle-timeout disable render is silently skipped).
  *
  * @returns the reply message, or `undefined` if the reply failed.
  */
 export async function mountInteractiveReply<State>(
   interaction: RepliableInteraction,
   controller: InteractiveMessage<State>,
+  options?: { readonly ephemeral?: boolean },
 ): Promise<Message | undefined> {
   const state = controller.initialState;
+  const components = componentsOf(controller, state, false);
 
-  const response = await safeDiscord(
-    interaction.reply({
-      flags: MessageFlags.IsComponentsV2,
-      components: componentsOf(controller, state, false),
-      withResponse: true,
-    }),
-    { action: 'interactiveReply' },
-  );
-  const message = response?.resource?.message ?? undefined;
+  /**
+   * A deferred interaction (e.g. to pre-load slow data) already has a reply to
+   * fill in via editReply; a fresh interaction is answered with reply.
+   */
+  let message: Message | undefined;
+  if (interaction.deferred || interaction.replied) {
+    message = await safeDiscord(
+      interaction.editReply({
+        flags: MessageFlags.IsComponentsV2,
+        components,
+      }),
+      { action: 'interactiveReply' },
+    );
+  } else {
+    const response = await safeDiscord(
+      interaction.reply({
+        flags:
+          options?.ephemeral === true
+            ? [MessageFlags.IsComponentsV2, MessageFlags.Ephemeral]
+            : [MessageFlags.IsComponentsV2],
+        components,
+        withResponse: true,
+      }),
+      { action: 'interactiveReply' },
+    );
+    message = response?.resource?.message ?? undefined;
+  }
   if (!message) return undefined;
 
   drive(message, controller, state);

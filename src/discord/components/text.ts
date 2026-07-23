@@ -1,7 +1,7 @@
 import { TextDisplayBuilder } from 'discord.js';
 import type { ContainerBuilder, SectionBuilder } from 'discord.js';
 import type { ContainerChild } from './component.js';
-import { md } from '../markdown.js';
+import { md } from '../theme/markdown.js';
 
 /** `subtle` renders as a small, dimmed line; the others map to Markdown headings. */
 export type TextSize = 'normal' | 'subtle' | 'small' | 'medium' | 'large';
@@ -16,7 +16,7 @@ const SIZE_PREFIX = {
 
 /**
  * Fluent wrapper over a Components V2 text display. Inline formatting (`bold`,
- * `code`, `link`, …) affects the current line only; `newLine()` appends further
+ * `code`, `link`, ...) affects the current line only; `newLine()` appends further
  * lines, each with its own formatting; `quote()` blockquotes the whole result.
  */
 export class Text implements ContainerChild {
@@ -93,6 +93,11 @@ export class Text implements ContainerChild {
   public title(): this {
     this.textSize = 'medium';
     return this;
+  }
+
+  /** This text as a top-level message component. */
+  public build(): TextDisplayBuilder {
+    return this.toBuilder();
   }
 
   private toBuilder(): TextDisplayBuilder {
