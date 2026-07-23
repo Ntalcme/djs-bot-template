@@ -1,19 +1,18 @@
 import { Events } from 'discord.js';
 import type { EventModule } from '../registries/index.js';
-import { logger } from '@/shared/index.js';
-import { runCommandPipeline } from '../command-pipeline.js';
+import { runCommandPipeline } from '../pipeline/command-pipeline.js';
+import { buildDenialHandlers } from '../pipeline/denial-handlers.js';
 import { config } from '@/core/config/index.js';
-import { lang } from '../lang/index.js';
-import { toError } from '../errors.js';
-import { COMMAND_PREFIX } from '../constants.js';
-import { safeReplyToMessage } from '../interactions/index.js';
-import { resolveLocale } from '../locale.js';
+import { COMMAND_PREFIX } from '../utils/constants.js';
+import { sendResponseToMessage } from '../interactions/index.js';
+import { resolveLocale } from '../context/locale.js';
 
 const event = {
   name: Events.MessageCreate,
   async execute(message) {
     if (message.author.bot) return;
-    if (!message.content.startsWith(COMMAND_PREFIX)) return;
+    const prefix = message.content.slice(0, COMMAND_PREFIX.length);
+    if (prefix.toLowerCase() !== COMMAND_PREFIX) return;
 
     const withoutPrefix = message.content.slice(COMMAND_PREFIX.length).trim();
     if (withoutPrefix.length === 0) return;
@@ -27,35 +26,28 @@ const event = {
     if (!command) return;
 
     const inGuild = message.inGuild();
-    const t = lang[resolveLocale(message.guild?.preferredLocale)].common;
+    const locale = resolveLocale(message.guild?.preferredLocale);
+    const { gate } = command;
 
     await runCommandPipeline(
       {
+        commandName: command.name,
         requirements: command.requirements,
         inGuild,
         inMainGuild: inGuild && message.guildId === config.mainGuildDiscordId,
         userId: message.author.id,
-        ownerId: config.ownerDiscordId,
       },
       {
         execute: () => command.execute(message, args),
-        onScopeDenied: (scope) =>
-          safeReplyToMessage(message, t.scopeDenied(scope)),
-        onPermissionDenied: () =>
-          safeReplyToMessage(message, t.permissionDenied),
-        onUnexpectedError: async (error) => {
-          logger.error(
-            { err: toError(error), command: name },
-            'Prefix command failed',
-          );
-          await safeReplyToMessage(message, t.unexpectedError);
-        },
-        ...(command.gate && {
-          gate: () => command.gate!(message, args),
-          onGateDenied: command.onGateDenied
-            ? () => command.onGateDenied!(message, args)
-            : () => safeReplyToMessage(message, t.gateDenied),
+        ...buildDenialHandlers({
+          locale,
+          commandName: command.name,
+          logLabel: 'Prefix command failed',
+          reply: async (response) => {
+            await sendResponseToMessage(message, response);
+          },
         }),
+        ...(gate ? { gate: () => gate(message, args) } : {}),
       },
     );
   },

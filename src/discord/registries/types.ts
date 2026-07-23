@@ -17,23 +17,31 @@ export interface SlashCommandData {
   toJSON(): RESTPostAPIApplicationCommandsJSONBody;
 }
 
-/** A slash command module: metadata, access rules, and an executor. */
+/**
+ * A slash command module: metadata, access rules, and an executor. `gate` is an
+ * optional extra check beyond `requirements` (a feature flag, a maintenance
+ * switch); resolve `false` to refuse the run. It is a function property, not a
+ * method, so a front can destructure it without unbinding `this`.
+ */
 export interface SlashCommand {
   readonly data: SlashCommandData;
   readonly requirements: CommandRequirements;
   execute(interaction: ChatInputCommandInteraction): Awaitable<void>;
-  gate?(interaction: ChatInputCommandInteraction): Awaitable<boolean>;
-  onGateDenied?(interaction: ChatInputCommandInteraction): Awaitable<void>;
+  readonly gate?: (
+    interaction: ChatInputCommandInteraction,
+  ) => Awaitable<boolean>;
 }
 
-/** A legacy prefix (message-based) command module. */
+/** A legacy prefix (message-based) command module; `gate` mirrors {@link SlashCommand}. */
 export interface PrefixCommand {
   readonly name: string;
   readonly aliases?: readonly string[];
   readonly requirements: CommandRequirements;
   execute(message: Message, args: readonly string[]): Awaitable<void>;
-  gate?(message: Message, args: readonly string[]): Awaitable<boolean>;
-  onGateDenied?(message: Message, args: readonly string[]): Awaitable<void>;
+  readonly gate?: (
+    message: Message,
+    args: readonly string[],
+  ) => Awaitable<boolean>;
 }
 
 /** A gateway event module bound to the client by the loader. */

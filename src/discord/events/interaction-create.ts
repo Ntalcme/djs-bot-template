@@ -1,12 +1,11 @@
 import { Events } from 'discord.js';
 import type { EventModule } from '../registries/index.js';
 import { logger } from '@/shared/index.js';
-import { runCommandPipeline } from '../command-pipeline.js';
+import { runCommandPipeline } from '../pipeline/command-pipeline.js';
+import { buildDenialHandlers } from '../pipeline/denial-handlers.js';
 import { config } from '@/core/config/index.js';
-import { lang } from '../lang/index.js';
-import { toError } from '../errors.js';
-import { safeReplyToInteraction } from '../interactions/index.js';
-import { resolveLocale } from '../locale.js';
+import { sendResponseToInteraction } from '../interactions/index.js';
+import { resolveLocale } from '../context/locale.js';
 
 const event = {
   name: Events.InteractionCreate,
@@ -26,36 +25,27 @@ const event = {
     }
 
     const inGuild = interaction.inGuild();
-    const t = lang[resolveLocale(interaction.locale)].common;
+    const locale = resolveLocale(interaction.locale);
+    const { gate } = command;
 
     await runCommandPipeline(
       {
+        commandName: interaction.commandName,
         requirements: command.requirements,
         inGuild,
         inMainGuild:
           inGuild && interaction.guildId === config.mainGuildDiscordId,
         userId: interaction.user.id,
-        ownerId: config.ownerDiscordId,
       },
       {
         execute: () => command.execute(interaction),
-        onScopeDenied: (scope) =>
-          safeReplyToInteraction(interaction, t.scopeDenied(scope)),
-        onPermissionDenied: () =>
-          safeReplyToInteraction(interaction, t.permissionDenied),
-        onUnexpectedError: async (error) => {
-          logger.error(
-            { err: toError(error), command: interaction.commandName },
-            'Slash command failed',
-          );
-          await safeReplyToInteraction(interaction, t.unexpectedError);
-        },
-        ...(command.gate && {
-          gate: () => command.gate!(interaction),
-          onGateDenied: command.onGateDenied
-            ? () => command.onGateDenied!(interaction)
-            : () => safeReplyToInteraction(interaction, t.gateDenied),
+        ...buildDenialHandlers({
+          locale,
+          commandName: interaction.commandName,
+          logLabel: 'Slash command failed',
+          reply: (response) => sendResponseToInteraction(interaction, response),
         }),
+        ...(gate ? { gate: () => gate(interaction) } : {}),
       },
     );
   },
